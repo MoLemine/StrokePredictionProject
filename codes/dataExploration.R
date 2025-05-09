@@ -5,7 +5,8 @@
 # -----------------------------------
 
 # 📦 Chargement et installation des bibliothèques nécessaires
-packages <- c("tidyverse", "ggplot2", "GGally", "corrplot")
+packages <- c("tidyverse", "ggplot2", "GGally", "corrplot","ggcorrplot","DMwR",
+              "caret","smotefamily","knitr","unbalanced")
 installed <- packages %in% rownames(installed.packages())
 if (any(!installed)) {
   install.packages(packages[!installed])
@@ -18,6 +19,11 @@ library(GGally)
 library(corrplot)
 library(dplyr)
 library(gridExtra)
+library(ggcorrplot)
+ 
+
+library(caret)
+library(smotefamily)
 
 # 📂 Chargement des données nettoyées depuis un fichier .rds
 stroke_data_clean <- readRDS("datasets/stroke_data_clean.rds")
@@ -65,6 +71,31 @@ ggplot(long_numeric, aes(x = value)) +
   )
 
 dev.off()
+# age vs bmi 
+png("figures/eda/age_vs_bmi.png", width = 1200, height = 800)
+ggplot(stroke_data_clean, aes(x = age, y = bmi)) +
+  geom_point(aes(color = factor(stroke)), alpha = 0.5) +
+  labs(title = "Relation entre l'âge et le BMI selon la présence d'un AVC",
+       x = "Âge", y = "BMI", color = "AVC") +
+  scale_color_manual(values = c("#0072B2", "#FF0000"),
+                     labels = c("Non AVC", "AVC")) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+# age vs bmi (stroke oui ou non )
+
+
+
+
+
+
 
 # 📊 Analyse univariée des variables catégorielles
 # Sélectionner les variables catégorielles
@@ -93,31 +124,377 @@ for (var in names(cat_vars)) {
 
 # analyse bivariée entre chaque variable  et la variable cible (stroke)
 
-# age vs stroke distribution
-png("figures/eda/age_vs_stroke.png", width = 800, height = 500)
+# creer le dossier figures/eda/bivariee s'il n'existe pas
+if (!dir.exists("figures/eda/bivariee")) dir.create("figures/eda/bivariee")
+# aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# Distribution âge vs AVC
+png("figures/eda/bivariee/age_vs_stroke.png", width = 1200, height = 800)
+
+# Créer des intervalles d'âge (30 intervalles)
+stroke_data_clean <- stroke_data_clean %>%
+  mutate(age_bin = cut(age, breaks = 30))
+
+# Résumer les données par tranche d'âge
+age_summary <- stroke_data_clean %>%
+  group_by(age_bin) %>%
+  summarise(
+    total = n(),
+    stroke_cases = sum(stroke == 1)
+  ) %>%
+  mutate(mid_point = (as.numeric(sub("\\((.+),.*", "\\1", age_bin)) + 
+                        as.numeric(sub(".*,(.+)\\]", "\\1", age_bin))) / 2)
+
+# Tracer l'histogramme
 ggplot(stroke_data_clean, aes(x = age, fill = factor(stroke))) +
-  geom_histogram(bins = 20, position = "identity", alpha = 0.5) +
-  labs(title = "Distribution de l'âge selon la présence d'un AVC",
-       x = "Âge", y = "Fréquence") +
-  scale_fill_manual(values = c("#0072B2", "#FF0000"), labels = c("Non AVC", "AVC")) +
+  geom_histogram(bins = 15, position = "stack", color = "white") +
+  geom_text(data = age_summary, aes(x = mid_point, y = total, label = stroke_cases),
+            inherit.aes = FALSE, vjust = -0.5, size = 3, color = "red", fontface = "bold") +
+  labs(
+    title = "Distribution de l'âge selon la présence d'un AVC",
+    x = "Âge",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
   theme_minimal(base_size = 14) +
   theme(
-    plot.title = element_text(size = 18, face = "bold", hjust = 0.5), # titre centré
-    axis.title = element_text(size = 14),   # titres des axes
-    axis.text = element_text(size = 12),    # valeurs des axes
-    legend.position = "top"                 # légende en haut
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# Hypertension vs AVC
+png("figures/eda/bivariee/hypertension_vs_stroke.png", width = 1200, height = 800)
+
+ggplot(stroke_data_clean, aes(x = factor(hypertension), fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Ajout du contour pour l'esthétique
+  labs(
+    title = "Répartition selon l'hypertension et l'AVC",
+    x = "Hypertension (0 = Non, 1 = Oui)",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# Statut tabagique vs AVC
+png("figures/eda/bivariee/smoking_status_vs_stroke.png", width = 1200, height = 800)
+
+ggplot(stroke_data_clean, aes(x = smoking_status, fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Ajout du contour
+  labs(
+    title = "Répartition selon le statut tabagique et l'AVC",
+    x = "Statut tabagique",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# bmi vs AVC
+png("figures/eda/bivariee/bmi_vs_stroke.png", width = 1200, height = 800)
+
+ggplot(stroke_data_clean, aes(x = bmi, fill = factor(stroke))) +
+  geom_histogram(binwidth = 2, position = "stack", color = "white") +
+  labs(
+    title = "Distribution du BMI selon la présence d'un AVC",
+    x = "BMI",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  scale_x_continuous(limits = c(10, 60)) +  # <-- ajout ici pour limiter l'axe X
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+dev.off()
+# Residance_type vs AVC
+png("figures/eda/bivariee/residence_type_vs_stroke.png", width = 1200, height = 800)
+ggplot(stroke_data_clean, aes(x = Residence_type, fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Ajout du contour
+  labs(
+    title = "Répartition selon le type de résidence et l'AVC",
+    x = "Type de résidence",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+dev.off()
+
+# work type vs AVC
+png("figures/eda/bivariee/work_type_vs_stroke.png", width = 1200, height = 800)
+ggplot(stroke_data_clean, aes(x = work_type, fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Ajout du contour
+  labs(
+    title = "Répartition selon le type de travail et l'AVC",
+    x = "Type de travail",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
   )
 dev.off()
 
 
+# matriel status vs AVC
+# Sauvegarde du graphique
+png("figures/eda/bivariee/marital_status_vs_stroke.png", width = 1200, height = 800)
+
+# Création du graphique
+ggplot(stroke_data_clean, aes(x = ever_married, fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Barres côte à côte avec contour blanc
+  labs(
+    title = "Répartition selon le statut marital et l'AVC",
+    x = "Statut marital (Marié ou non)",
+    y = "Nombre de patients",
+    fill = "Présence d'AVC"
+  ) +
+  scale_x_discrete(labels = c("No" = "Non marié", "Yes" = "Marié")) +  # Traduire Yes/No
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# heart_disease vs AVC
+png("figures/eda/bivariee/heart_disease_vs_stroke.png", width = 1200, height = 800)
+ggplot(stroke_data_clean, aes(x = factor(heart_disease), fill = factor(stroke))) +
+  geom_bar(position = "dodge", color = "white") +  # Ajout du contour
+  labs(
+    title = "Répartition selon la maladie cardiaque et l'AVC",
+    x = "Maladie cardiaque (0 = Non, 1 = Oui)",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+dev.off()
+# avg_glucose_level vs AVC
+png("figures/eda/bivariee/avg_glucose_level_vs_stroke.png", width = 1200, height = 800)
+ggplot(stroke_data_clean, aes(x = avg_glucose_level, fill = factor(stroke))) +
+  geom_histogram(binwidth = 5, position = "stack", color = "white") +
+  labs(
+    title = "Distribution du taux moyen de glucose selon la présence d'un AVC",
+    x = "Taux moyen de glucose",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  coord_cartesian(xlim = c(30, 300)) +  # <-- Remplacer scale_x_continuous par coord_cartesian
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# bmi vs AVC
+png("figures/eda/bivariee/bmi_vs_stroke.png", width = 1200, height = 800)
+
+ggplot(stroke_data_clean, aes(x = bmi, fill = factor(stroke))) +
+  geom_histogram(binwidth = 2, position = "stack", color = "white") +
+  labs(
+    title = "Distribution du BMI selon la présence d'un AVC",
+    x = "BMI",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+dev.off()
+
+# gender vs AVC
+
+png("figures/eda/bivariee/gender_vs_stroke.png", width = 1200, height = 800)
+
+# Création du graphique
+ggplot(stroke_data_clean, aes(x = gender, fill = factor(stroke))) +
+  geom_bar(position = "stack", color = "white") +
+  labs(
+    title = "Répartition selon le genre et la présence d'un AVC",
+    x = "Genre",
+    y = "Nombre de patients",
+    fill = ""
+  ) +
+  scale_fill_manual(
+    values = c("#0072B2", "#FF0000"),
+    labels = c("Non AVC", "AVC")
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "top",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 11)
+  )
+
+# Fermeture du fichier png
+dev.off()
+
+# matrice de corrélation entre les variables continues
+# Créer le dossier figures/eda/correlation s'il n'existe pas
+
+if (!dir.exists("figures/eda/correlation")) dir.create("figures/eda/correlation")
 
 
+stroke_data_clean <- stroke_data_clean %>%
+  mutate(stroke = as.numeric(as.character(stroke)))
+# Sélectionner les variables continues
+numeric_vars <- stroke_data_clean %>%
+  select(where(is.numeric))
 
+# Calcul de la matrice de corrélation
+cor_matrix <- cor(numeric_vars, use = "complete.obs", method = "pearson")
 
+# Sauvegarder la matrice de corrélation
+png("figures/eda/correlation/correlation_matrix.png", width = 1200, height = 800)
 
+ggcorrplot(cor_matrix, 
+           method = "square", 
+           type = "upper", 
+           lab = TRUE, 
+           lab_size = 3, 
+           colors = c("#6D9EC1", "white", "#E46726"),
+           title = "Matrice de Corrélation des Variables Numériques",
+           ggtheme = ggplot2::theme_minimal())
 
+dev.off()
 
+# Sauvegarder la matrice de corrélation sous forme de tableau
+png("figures/eda/correlation/correlation_table.png", width = 1200, height = 800)
+corrplot(cor_matrix, 
+         method = "color", 
+         type = "upper", 
+         addCoef.col = "black",
+         tl.cex = 0.8, 
+         number.cex = 0.7, 
+         title = "Matrice de Corrélation des Variables Numériques",
+         mar = c(0,0,1,0))
+dev.off()
 
+# running smote function on stroke_data_clean
+predictor_variables <- stroke_data_clean %>% select(-stroke)
+response_variable <- stroke_data_clean$stroke
+
+# running smote function on data
+Smote_data <- ubBalance(predictor_variables, 
+                        response_variable, 
+                        type='ubSMOTE',     # Option for SMOTE
+                        perc.over = 100,    # Percentage of oversampling
+                        perc.under = 200,   # Percentage of undersampling
+                        k = 5,              # Number of nearest neighbors
+                      
+                        verbose = TRUE      # Verbose output
+                        )
 
 
 
