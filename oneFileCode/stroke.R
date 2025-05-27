@@ -1,18 +1,26 @@
 # -----------------------------------
 # 📦 Chargement des bibliothèques
 # -----------------------------------
-packages <- c("tidyverse", "naniar", "DataExplorer", "ggplot2","rlang","GGally","corrplot","dplyr")
+packages <- c("tidyverse","tidymodels", "naniar", "DataExplorer", "ggplot2","rlang","GGally","corrplot","dplyr" , "e1071", "randomForest", "rpart", "xgboost", "ROSE", "pROC", "MLmetrics")
 installed <- packages %in% rownames(installed.packages())
 if (any(!installed)) {
   install.packages(packages[!installed])
 }
 library(dplyr)
 library(tidyverse)
+library(readr)
+library(tidymodels)
 library(naniar)
 library(ggplot2)
 library(DataExplorer)
 library(GGally)   # pour ggpairs
 library(corrplot) # pour matrice de corrélation
+library(caret)
+library(e1071)          # Naive Bayes & SVM
+library(rpart)          # Arbre de décision
+library(randomForest)   # Random Forest
+library(pROC)           # AUC/ROC
+library(MLmetrics)      # F1 Score
 
 
 
@@ -214,6 +222,29 @@ ggplot(long_numeric, aes(x = value)) +
   )
 
 dev.off()
+
+# boite à moustaches pour les variables continues
+png("oneFileCode/figures/boite_moustaches.png", width = 1200, height = 800)
+ggplot(long_numeric, aes(x = variable, y = value)) +
+  geom_boxplot(fill = "#56B4E9", color = "black", outlier.color = "red", outlier.size = 2) +
+  labs(
+    title = "Boîte à moustaches des variables continues",
+    x = "Variable",
+    y = "Valeur"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+dev.off()
+# count outliers 
+outliers <- long_numeric %>%
+  group_by(variable) %>%
+  summarise(outliers = sum(value < quantile(value, 0.25) - 1.5 * IQR(value) | value > quantile(value, 0.75) + 1.5 * IQR(value)))
+
 
 # 📊 Visualisation des variables catégorielles (avec pourcentage)
 
@@ -596,43 +627,131 @@ ggplot(stroke_data, aes(x = age, y = bmi, color = stroke, shape = stroke)) +
   )
 dev.off()
 
+# Models 
+
+#  origin destrubition #
+
+set.seed(123)
+index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data[index, ]
+test_data  <- stroke_data[-index, ]
+
+# proportions naturelles
+prop.table(table(train_data$stroke)) * 100
+prop.table(table(test_data$stroke)) * 100
+# Function to evaluate model performance
+evaluate_model <- function(model, test_data, model_name) {
+  pred <- predict(model, newdata = test_data)
+  
+  # Confusion matrix
+  cm <- confusionMatrix(pred, test_data$stroke)
+  
+  # AUC
+  roc_obj <- roc(as.numeric(test_data$stroke), as.numeric(pred))
+  auc_val <- auc(roc_obj)
+  
+  # F1-score
+  f1 <- F1_Score(pred, test_data$stroke, positive = "Stroke")
+  
+  cat("\n---", model_name, "---\n")
+  print(cm)
+  cat("AUC:", auc_val, "\n")
+  cat("F1 Score:", f1, "\n")
+  
+  return(list(
+    Accuracy = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],
+    Specificity = cm$byClass["Specificity"],
+    F1 = f1,
+    AUC = auc_val
+  ))
+}
+
+# Logistic Regression
+model_log <- train(stroke ~ ., data = train_data, method = "glm", family = "binomial")
+results_log <- evaluate_model(model_log, test_data, "Régression Logistique")
+
+# arbre de décision
+
+model_tree <- train(stroke ~ ., data = train_data, method = "rpart")
+results_tree <- evaluate_model(model_tree, test_data, "Arbre de Décision")
+# Random Forest
+model_rf <- train(stroke ~ ., data = train_data, method = "rf", ntree = 100)
+results_rf <- evaluate_model(model_rf, test_data, "Random Forest")
+
+# Naive Bayes
 
 
+model_nb <- train(stroke ~ ., data = train_data, method = "naive_bayes")
+results_nb <- evaluate_model(model_nb, test_data, "Naive Bayes")
 
+#--------------------------Note --------------------------#
+            # Les modèles à prédire la classe majoritaire (no Stroke) 
+            # et ignorent la minoritaire (Stroke).
+#--------------------------Note --------------------------#
 
+#  1. Séparer train/test sans équilibrage
+set.seed(123)
+index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_raw <- stroke_data[index, ]
+test_data <- stroke_data[-index, ]
 
+# Vérif : proportions naturelles
+prop.table(table(train_raw$stroke)) * 100
+prop.table(table(test_data$stroke)) * 100
 
+# 2. Équilibrer le TRAIN avec ROSE
+set.seed(123)
+library(ROSE)
+train_bal <- ROSE(stroke ~ ., data = train_raw, seed = 1)$data
+table(train_bal$stroke)  # Vérifie bien l’équilibre
+prop.table(table(train_bal$stroke)) * 100  # Proportions du train eqi
 
+#  3. Fonction pour entraîner, prédire et évaluer
+evaluate_model <- function(model, test_data, model_name) {
+  pred <- predict(model, newdata = test_data)
+  cm <- confusionMatrix(pred, test_data$stroke)
+  roc_obj <- roc(as.numeric(test_data$stroke), as.numeric(pred))
+  auc_val <- auc(roc_obj)
+  f1 <- F1_Score(pred, test_data$stroke, positive = "Stroke")
+  
+  cat("\n---", model_name, "---\n")
+  print(cm)
+  cat("AUC:", auc_val, "\n")
+  cat("F1 Score:", f1, "\n")
+  
+  return(data.frame(
+    Model = model_name,
+    Accuracy = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],
+    Specificity = cm$byClass["Specificity"],
+    F1 = f1,
+    AUC = auc_val
+  ))
+}
 
+#  4. Entraînement des modèles sur le TRAIN équilibré
 
+# a) Régression logistique
+model_log <- train(stroke ~ ., data = train_bal, method = "glm", family = "binomial")
+res_log <- evaluate_model(model_log, test_data, "Régression Logistique")
 
+# b) Arbre de décision
+model_tree <- train(stroke ~ ., data = train_bal, method = "rpart")
+res_tree <- evaluate_model(model_tree, test_data, "Arbre de Décision")
 
+# c) Random Forest
+model_rf <- train(stroke ~ ., data = train_bal, method = "rf", ntree = 100)
+res_rf <- evaluate_model(model_rf, test_data, "Random Forest")
 
+# d) Naive Bayes
+model_nb <- train(stroke ~ ., data = train_bal, method = "naive_bayes")
+res_nb <- evaluate_model(model_nb, test_data, "Naive Bayes")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#  5. Comparaison des résultats
+results <- rbind(res_log, res_tree, res_rf, res_nb)
+cat("\n\n--- Résultats des modèles ---\n")
+print(results)
 
 
 
