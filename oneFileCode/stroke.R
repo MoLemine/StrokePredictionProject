@@ -753,5 +753,205 @@ results <- rbind(res_log, res_tree, res_rf, res_nb)
 cat("\n\n--- Résultats des modèles ---\n")
 print(results)
 
+# Normalisation des variables numériques
+numeric_vars <- c("age", "avg_glucose_level", "bmi")
+stroke_data[numeric_vars] <- scale(stroke_data[numeric_vars])
+# Séparation des données en train/test
+set.seed(123)
+index <- createDataPartition(stroke_data$stroke, p = 0.7, list = FALSE)
+train_data <- stroke_data[index, ]
+test_data  <- stroke_data[-index, ]
+
+# --------------------------
+# 🧠 Fonction d’évaluation
+# --------------------------
+evaluate_model <- function(pred, true, model_name) {
+  cm <- confusionMatrix(as.factor(pred), as.factor(true), positive = "Stroke")
+  auc_val <- auc(roc(as.numeric(true), as.numeric(pred == "Stroke")))
+  f1 <- F1_Score(y_pred = pred, y_true = true, positive = "Stroke")
+  
+  cat("\n---", model_name, "---\n")
+  print(cm)
+  cat("AUC:", auc_val, "\n")
+  cat("F1 Score:", f1, "\n")
+  
+  return(data.frame(
+    Model = model_name,
+    Accuracy = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],
+    Specificity = cm$byClass["Specificity"],
+    F1 = f1,
+    AUC = auc_val
+  ))
+}
+# --------------------------
+# Entraînement des modèles
+# --------------------------
+
+results <- list()
+
+## 1. Naive Bayes
+model_nb <- naiveBayes(stroke ~ ., data = train_data)
+pred_nb <- predict(model_nb, newdata = test_data)
+results[[4]] <- evaluate_model(pred_nb, test_data$stroke, "Naive Bayes")
+
+## 2. XGBoost
+library(xgboost)
+train_matrix <- model.matrix(stroke ~ . -1, data = train_data)
+train_label <- as.numeric(train_data$stroke) - 1
+test_matrix <- model.matrix(stroke ~ . -1, data = test_data)
+test_label <- test_data$stroke
+xgb_model <- xgboost(
+  data = train_matrix,
+  label = train_label,
+  objective = "binary:logistic",
+  eval_metric = "auc",
+  scale_pos_weight = sum(train_label == 0) / sum(train_label == 1),
+  nrounds = 100,
+  verbose = 0
+)
+pred_xgb_prob <- predict(xgb_model, test_matrix)
+pred_xgb <- ifelse(pred_xgb_prob > 0.3, "Stroke", "No Stroke")
+results[[5]] <- evaluate_model(pred_xgb, test_label, "XGBoost")
+
+results_df <- do.call(rbind, results)
+print(results_df)
+
+# -----------------------------------
+
+# Cost Sensitive Learning
+
+set.seed(123)
+index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data[index, ]
+test_data  <- stroke_data[-index, ]
+
+# define cost matrix strategy
+
+cost_matrix <- matrix(c(0, 1,   # FP (No Stroke → Stroke) = 1
+                        10, 0), # FN (Stroke → No Stroke) = 10 (high penalty)
+                      nrow = 2, byrow = TRUE)
+colnames(cost_matrix) <- rownames(cost_matrix) <- c("No Stroke", "Stroke")
+
+# class weights for glm or random forest
+
+# give 10x more importance to "Stroke"
+train_data$weights <- ifelse(train_data$stroke == "Stroke", 10, 1)
+
+# Logistic Regression with cost-sensitive learning
+model_log <- train(
+  x = subset(train_data, select = -c(stroke, weights)),
+  y = train_data$stroke,
+  method = "glm", family = "binomial",
+  weights = train_data$weights
+)
+# Evaluate the model
+eval_log <- evaluate_model(predict(model_log, newdata = test_data), test_data$stroke, "Logistic Regression (Cost-Sensitive)")
+
+
+#     SMOTE        #
+# Install if needed
+packages <- c("caret", "DMwR", "ROSE", "randomForest", "pROC", "MLmetrics", "rpart")
+installed <- packages %in% rownames(installed.packages())
+if (any(!installed)) install.packages(packages[!installed])
+library(caret)
+library(DMwR)
+library(ROSE)
+library(randomForest)
+library(pROC)
+library(MLmetrics)
+library(rpart)
+
+
+evaluate_model <- function(model, test_data, model_name) {
+  pred <- predict(model, newdata = test_data)
+  cm <- confusionMatrix(pred, test_data$stroke)
+  auc_val <- auc(roc(as.numeric(test_data$stroke), as.numeric(pred)))
+  f1 <- F1_Score(pred, test_data$stroke, positive = "Stroke")
+  
+  return(data.frame(
+    Model = model_name,
+    Accuracy = cm$overall["Accuracy"],
+    Sensitivity = cm$byClass["Sensitivity"],
+    Specificity = cm$byClass["Specificity"],
+    F1 = f1,
+    AUC = auc_val
+  ))
+}
+
+run_imbalance_experiment <- function(train_data, test_data) {
+  results <- list()
+  
+  ## 1. Baseline
+  model_baseline <- train(stroke ~ ., data = train_data, method = "rf", ntree = 100)
+  results[[1]] <- evaluate_model(model_baseline, test_data, "Random Forest (Original)")
+  
+  ## 3. SMOTE
+  train_data$stroke <- as.factor(train_data$stroke)  # Ensure factor
+  smote_data <- SMOTE(stroke ~ ., data = train_data, perc.over = 300, perc.under = 150)
+  model_smote <- train(stroke ~ ., data = smote_data, method = "rf", ntree = 100)
+  results[[3]] <- evaluate_model(model_smote, test_data, "Random Forest (SMOTE)")
+  
+  ## 4. Downsampling
+  down <- downSample(x = train_data[, -which(names(train_data) == "stroke")],
+                     y = train_data$stroke)
+  colnames(down)[ncol(down)] <- "stroke"
+  model_down <- train(stroke ~ ., data = down, method = "rf", ntree = 100)
+  results[[4]] <- evaluate_model(model_down, test_data, "Random Forest (Downsample)")
+  
+  ## 5. Cost-sensitive
+  model_cost <- randomForest(stroke ~ ., data = train_data,
+                             ntree = 100, classwt = c("No Stroke" = 1, "Stroke" = 10))
+  results[[5]] <- evaluate_model(model_cost, test_data, "Random Forest (Cost-Sensitive)")
+  
+  # Return as one data frame
+  do.call(rbind, results)
+}
+
+
+# Split your dataset
+set.seed(123)
+index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data[index, ]
+test_data <- stroke_data[-index, ]
+
+# Run all techniques
+results <- run_imbalance_experiment(train_data, test_data)
+
+
+print(results)
+
+# matrice de confusion pour le modèle Random Forest avec SMOTE
+png("oneFileCode/figures/confusion_matrix_rf_smote.png", width = 800, height = 600)
+confusion_matrix_rf_smote <- confusionMatrix(predict(model_smote, newdata = test_data), test_data$stroke)
+fourfoldplot(confusion_matrix_rf_smote$table, color = c("#56B4E9", "#D55E00"), 
+             conf.level = 0, margin = 1, main = "Matrice de confusion - Random Forest (SMOTE)")
+dev.off()
+
+
+# -----------------------------------
+# 💾 Sauvegarde du modèle
+# -----------------------------------
+if (!dir.exists("models")) dir.create("models")
+install.packages("plumber")
+library(plumber)
+saveRDS(model_log, "models/stroke_model_log.rds")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
