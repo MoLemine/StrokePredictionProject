@@ -75,7 +75,7 @@ print(conf_matrix)
 # Visualize neural network performance (optional summary)
 print(nn_model)
 # visualisation confusion matrix
-png("oneFileCode/figures/confusion_matrix_nn.png")
+png("oneFileCode/figures/confusion_matrix_nn.png", width = 800, height = 600)
 fourfoldplot(conf_matrix$table, color = c("lightblue", "lightgreen"),
               main = "Matrice de confusion du réseau de neurones avec pondération (seuil par défaut)")
 dev.off()

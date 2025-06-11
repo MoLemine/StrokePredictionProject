@@ -145,17 +145,6 @@ ggplot(non_na_counts_clean, aes(x = reorder(variable, -non_na_count), y = non_na
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 dev.off()
 
-# -----------------------------------
-       # end nettoyage space
-# -----------------------------------
-
-# -------------------------------------------
-
-    # 📊 Visualisation des données (eda)
-
-# ------------------------------------------
-
-
 # Transformation des variables catégorielles en facteurs
 stroke_data <- stroke_data_clean %>%
   mutate(
@@ -168,6 +157,19 @@ stroke_data <- stroke_data_clean %>%
     heart_disease = factor(heart_disease, levels = c(0, 1), labels = c("No", "Yes")),
     stroke = factor(stroke, levels = c(0, 1), labels = c("No Stroke", "Stroke"))
   )
+
+# -----------------------------------
+       # end nettoyage space
+# -----------------------------------
+
+# -------------------------------------------
+
+    # 📊 Visualisation des données (eda)
+
+# ------------------------------------------
+
+
+
 
 # visualisation de variable cible (stroke) en pourcentage 
 png("oneFileCode/figures/variable_cible.png", width = 1200, height = 800)
@@ -672,16 +674,14 @@ model_log <- train(stroke ~ ., data = train_data, method = "glm", family = "bino
 results_log <- evaluate_model(model_log, test_data, "Régression Logistique")
 
 # arbre de décision
-
 model_tree <- train(stroke ~ ., data = train_data, method = "rpart")
 results_tree <- evaluate_model(model_tree, test_data, "Arbre de Décision")
+
 # Random Forest
 model_rf <- train(stroke ~ ., data = train_data, method = "rf", ntree = 100)
 results_rf <- evaluate_model(model_rf, test_data, "Random Forest")
 
 # Naive Bayes
-
-
 model_nb <- train(stroke ~ ., data = train_data, method = "naive_bayes")
 results_nb <- evaluate_model(model_nb, test_data, "Naive Bayes")
 
@@ -690,29 +690,52 @@ results_nb <- evaluate_model(model_nb, test_data, "Naive Bayes")
             # et ignorent la minoritaire (Stroke).
 #--------------------------Note --------------------------#
 
-#  1. Séparer train/test sans équilibrage
+#-------------Cost-Sensitive Learning--------------------#
+
+# séparer les jeux d'entraînement/test
+
+library(caret)
 set.seed(123)
-index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
-train_raw <- stroke_data[index, ]
-test_data <- stroke_data[-index, ]
+train_index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data[train_index, ]
+test_data <- stroke_data[-train_index, ]
 
-# Vérif : proportions naturelles
-prop.table(table(train_raw$stroke)) * 100
-prop.table(table(test_data$stroke)) * 100
+# Application du Cost-Sensitive Learning
+cost_matrix <- matrix(c(0, 1, 5, 0), nrow = 2,
+                      dimnames = list(predicted = c("No Stroke", "Stroke"),
+                                      actual = c("No Stroke", "Stroke")))
 
-# 2. Équilibrer le TRAIN avec ROSE
-set.seed(123)
-library(ROSE)
-train_bal <- ROSE(stroke ~ ., data = train_raw, seed = 1)$data
-table(train_bal$stroke)  # Vérifie bien l’équilibre
-prop.table(table(train_bal$stroke)) * 100  # Proportions du train eqi
 
-#  3. Fonction pour entraîner, prédire et évaluer
-evaluate_model <- function(model, test_data, model_name) {
+# Logistic Regression avec pondération
+model_log_cs <- train(stroke ~ ., data = train_data,
+                      method = "glm",
+                      family = "binomial",
+                      weights = ifelse(train_data$stroke == "Stroke", 5, 1))
+
+# Random Forest avec pondération
+library(randomForest)
+model_rf <- randomForest(stroke ~ ., data = train_data,
+                         classwt = c("No Stroke" = 1, "Stroke" = 5))
+# KNN avec cost-sensitive
+model_knn <- train(stroke ~ ., data = train_data,
+                      method = "knn",
+                      tuneGrid = expand.grid(k = 5),
+                      weights = ifelse(train_data$stroke == "Stroke", 5, 1))
+
+
+# Evaluation des modèles (Logistic Regression, Random Forest, KNN) 
+# evaluation function
+evaluate_model_cs <- function(model, test_data, model_name) {
   pred <- predict(model, newdata = test_data)
+  
+  # Confusion matrix
   cm <- confusionMatrix(pred, test_data$stroke)
+  
+  # AUC
   roc_obj <- roc(as.numeric(test_data$stroke), as.numeric(pred))
   auc_val <- auc(roc_obj)
+  
+  # F1-score
   f1 <- F1_Score(pred, test_data$stroke, positive = "Stroke")
   
   cat("\n---", model_name, "---\n")
@@ -720,8 +743,7 @@ evaluate_model <- function(model, test_data, model_name) {
   cat("AUC:", auc_val, "\n")
   cat("F1 Score:", f1, "\n")
   
-  return(data.frame(
-    Model = model_name,
+  return(list(
     Accuracy = cm$overall["Accuracy"],
     Sensitivity = cm$byClass["Sensitivity"],
     Specificity = cm$byClass["Specificity"],
@@ -729,229 +751,275 @@ evaluate_model <- function(model, test_data, model_name) {
     AUC = auc_val
   ))
 }
-
-#  4. Entraînement des modèles sur le TRAIN équilibré
-
-# a) Régression logistique
-model_log <- train(stroke ~ ., data = train_bal, method = "glm", family = "binomial")
-res_log <- evaluate_model(model_log, test_data, "Régression Logistique")
-
-# b) Arbre de décision
-model_tree <- train(stroke ~ ., data = train_bal, method = "rpart")
-res_tree <- evaluate_model(model_tree, test_data, "Arbre de Décision")
-
-# c) Random Forest
-model_rf <- train(stroke ~ ., data = train_bal, method = "rf", ntree = 100)
-res_rf <- evaluate_model(model_rf, test_data, "Random Forest")
-
-# d) Naive Bayes
-model_nb <- train(stroke ~ ., data = train_bal, method = "naive_bayes")
-res_nb <- evaluate_model(model_nb, test_data, "Naive Bayes")
-
-#  5. Comparaison des résultats
-results <- rbind(res_log, res_tree, res_rf, res_nb)
-cat("\n\n--- Résultats des modèles ---\n")
-print(results)
-
-# Normalisation des variables numériques
-numeric_vars <- c("age", "avg_glucose_level", "bmi")
-stroke_data[numeric_vars] <- scale(stroke_data[numeric_vars])
-# Séparation des données en train/test
-set.seed(123)
-index <- createDataPartition(stroke_data$stroke, p = 0.7, list = FALSE)
-train_data <- stroke_data[index, ]
-test_data  <- stroke_data[-index, ]
-
-# --------------------------
-# 🧠 Fonction d’évaluation
-# --------------------------
-evaluate_model <- function(pred, true, model_name) {
-  cm <- confusionMatrix(as.factor(pred), as.factor(true), positive = "Stroke")
-  auc_val <- auc(roc(as.numeric(true), as.numeric(pred == "Stroke")))
-  f1 <- F1_Score(y_pred = pred, y_true = true, positive = "Stroke")
-  
-  cat("\n---", model_name, "---\n")
-  print(cm)
-  cat("AUC:", auc_val, "\n")
-  cat("F1 Score:", f1, "\n")
-  
-  return(data.frame(
-    Model = model_name,
-    Accuracy = cm$overall["Accuracy"],
-    Sensitivity = cm$byClass["Sensitivity"],
-    Specificity = cm$byClass["Specificity"],
-    F1 = f1,
-    AUC = auc_val
-  ))
-}
-# --------------------------
-# Entraînement des modèles
-# --------------------------
-
-results <- list()
-
-## 1. Naive Bayes
-model_nb <- naiveBayes(stroke ~ ., data = train_data)
-pred_nb <- predict(model_nb, newdata = test_data)
-results[[4]] <- evaluate_model(pred_nb, test_data$stroke, "Naive Bayes")
-
-## 2. XGBoost
-library(xgboost)
-train_matrix <- model.matrix(stroke ~ . -1, data = train_data)
-train_label <- as.numeric(train_data$stroke) - 1
-test_matrix <- model.matrix(stroke ~ . -1, data = test_data)
-test_label <- test_data$stroke
-xgb_model <- xgboost(
-  data = train_matrix,
-  label = train_label,
-  objective = "binary:logistic",
-  eval_metric = "auc",
-  scale_pos_weight = sum(train_label == 0) / sum(train_label == 1),
-  nrounds = 100,
-  verbose = 0
+# Evaluation des modèles
+results_log_cs <- evaluate_model_cs(model_log_cs, test_data, "Régression Logistique (Cost-Sensitive)")
+results_rf_cs <- evaluate_model_cs(model_rf, test_data, "Random Forest (Cost-Sensitive)")
+results_knn_cs <- evaluate_model_cs(model_knn, test_data, "KNN (Cost-Sensitive)")
+# Comparaison des résultats
+results_comparison <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "KNN"),
+  Accuracy = c(results_log_cs$Accuracy, results_rf_cs$Accuracy, results_knn_cs$Accuracy),
+  Sensitivity = c(results_log_cs$Sensitivity, results_rf_cs$Sensitivity, results_knn_cs$Sensitivity),
+  Specificity = c(results_log_cs$Specificity, results_rf_cs$Specificity, results_knn_cs$Specificity),
+  F1 = c(results_log_cs$F1, results_rf_cs$F1, results_knn_cs$F1),
+  AUC = c(results_log_cs$AUC, results_rf_cs$AUC, results_knn_cs$AUC)
 )
-pred_xgb_prob <- predict(xgb_model, test_matrix)
-pred_xgb <- ifelse(pred_xgb_prob > 0.3, "Stroke", "No Stroke")
-results[[5]] <- evaluate_model(pred_xgb, test_label, "XGBoost")
-
-results_df <- do.call(rbind, results)
-print(results_df)
-
-# -----------------------------------
-
-# Cost Sensitive Learning
-
-set.seed(123)
-index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
-train_data <- stroke_data[index, ]
-test_data  <- stroke_data[-index, ]
-
-# define cost matrix strategy
-
-cost_matrix <- matrix(c(0, 1,   # FP (No Stroke → Stroke) = 1
-                        10, 0), # FN (Stroke → No Stroke) = 10 (high penalty)
-                      nrow = 2, byrow = TRUE)
-colnames(cost_matrix) <- rownames(cost_matrix) <- c("No Stroke", "Stroke")
-
-# class weights for glm or random forest
-
-# give 10x more importance to "Stroke"
-train_data$weights <- ifelse(train_data$stroke == "Stroke", 10, 1)
-
-# Logistic Regression with cost-sensitive learning
-model_log <- train(
-  x = subset(train_data, select = -c(stroke, weights)),
-  y = train_data$stroke,
-  method = "glm", family = "binomial",
-  weights = train_data$weights
-)
-# Evaluate the model
-eval_log <- evaluate_model(predict(model_log, newdata = test_data), test_data$stroke, "Logistic Regression (Cost-Sensitive)")
-
-
-#     SMOTE        #
-# Install if needed
-packages <- c("caret", "DMwR", "ROSE", "randomForest", "pROC", "MLmetrics", "rpart")
-installed <- packages %in% rownames(installed.packages())
-if (any(!installed)) install.packages(packages[!installed])
-library(caret)
-library(DMwR)
-library(ROSE)
-library(randomForest)
-library(pROC)
-library(MLmetrics)
-library(rpart)
-
-
-evaluate_model <- function(model, test_data, model_name) {
-  pred <- predict(model, newdata = test_data)
-  cm <- confusionMatrix(pred, test_data$stroke)
-  auc_val <- auc(roc(as.numeric(test_data$stroke), as.numeric(pred)))
-  f1 <- F1_Score(pred, test_data$stroke, positive = "Stroke")
-  
-  return(data.frame(
-    Model = model_name,
-    Accuracy = cm$overall["Accuracy"],
-    Sensitivity = cm$byClass["Sensitivity"],
-    Specificity = cm$byClass["Specificity"],
-    F1 = f1,
-    AUC = auc_val
-  ))
-}
-
-run_imbalance_experiment <- function(train_data, test_data) {
-  results <- list()
-  
-  ## 1. Baseline
-  model_baseline <- train(stroke ~ ., data = train_data, method = "rf", ntree = 100)
-  results[[1]] <- evaluate_model(model_baseline, test_data, "Random Forest (Original)")
-  
-  ## 3. SMOTE
-  train_data$stroke <- as.factor(train_data$stroke)  # Ensure factor
-  smote_data <- SMOTE(stroke ~ ., data = train_data, perc.over = 300, perc.under = 150)
-  model_smote <- train(stroke ~ ., data = smote_data, method = "rf", ntree = 100)
-  results[[3]] <- evaluate_model(model_smote, test_data, "Random Forest (SMOTE)")
-  
-  ## 4. Downsampling
-  down <- downSample(x = train_data[, -which(names(train_data) == "stroke")],
-                     y = train_data$stroke)
-  colnames(down)[ncol(down)] <- "stroke"
-  model_down <- train(stroke ~ ., data = down, method = "rf", ntree = 100)
-  results[[4]] <- evaluate_model(model_down, test_data, "Random Forest (Downsample)")
-  
-  ## 5. Cost-sensitive
-  model_cost <- randomForest(stroke ~ ., data = train_data,
-                             ntree = 100, classwt = c("No Stroke" = 1, "Stroke" = 10))
-  results[[5]] <- evaluate_model(model_cost, test_data, "Random Forest (Cost-Sensitive)")
-  
-  # Return as one data frame
-  do.call(rbind, results)
-}
-
-
-# Split your dataset
-set.seed(123)
-index <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
-train_data <- stroke_data[index, ]
-test_data <- stroke_data[-index, ]
-
-# Run all techniques
-results <- run_imbalance_experiment(train_data, test_data)
-
-
-print(results)
-
-# matrice de confusion pour le modèle Random Forest avec SMOTE
-png("oneFileCode/figures/confusion_matrix_rf_smote.png", width = 800, height = 600)
-confusion_matrix_rf_smote <- confusionMatrix(predict(model_smote, newdata = test_data), test_data$stroke)
-fourfoldplot(confusion_matrix_rf_smote$table, color = c("#56B4E9", "#D55E00"), 
-             conf.level = 0, margin = 1, main = "Matrice de confusion - Random Forest (SMOTE)")
+# Affichage des résultats
+print(results_comparison)
+# Visualisation des résultats comparison
+# save the figure
+png("oneFileCode/figures/comparison_models_cost_sensitive.png", width = 1200, height = 800)
+results_long <- results_comparison %>%
+  pivot_longer(cols = -Model, names_to = "Metric", values_to = "Value")
+ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Comparaison des modèles (Cost-Sensitive Learning)",
+       x = "Modèle", y = "Valeur") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 12)
+  )
+dev.off()
+# visualisation des résultats de matrice de confusion 
+# logistic regression
+png("oneFileCode/figures/confusion_matrix_logistic.png", width = 800, height = 600)
+cm_log <- confusionMatrix(predict(model_log_cs, test_data), test_data$stroke)
+ggplot(as.data.frame(cm_log$table), aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Matrice de confusion - Régression Logistique (Cost-Sensitive)",
+       x = "Classe réelle", y = "Classe prédite") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold")
+  )
+dev.off()
+# random forest
+png("oneFileCode/figures/confusion_matrix_rf.png", width = 800, height = 600)
+cm_rf <- confusionMatrix(predict(model_rf, test_data), test_data$stroke)
+ggplot(as.data.frame(cm_rf$table), aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Matrice de confusion - Random Forest (Cost-Sensitive)",
+       x = "Classe réelle", y = "Classe prédite") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold")
+  )
+dev.off()
+# KNN
+png("oneFileCode/figures/confusion_matrix_knn.png", width = 800, height = 600)
+cm_knn <- confusionMatrix(predict(model_knn, test_data), test_data$stroke)
+ggplot(as.data.frame(cm_knn$table), aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 5) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(title = "Matrice de confusion - KNN (Cost-Sensitive)",
+       x = "Classe réelle", y = "Classe prédite") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold")
+  )
 dev.off()
 
 
-# -----------------------------------
-# 💾 Sauvegarde du modèle
-# -----------------------------------
-if (!dir.exists("models")) dir.create("models")
-install.packages("plumber")
-library(plumber)
-saveRDS(model_log, "models/stroke_model_log.rds")
+# Features importance for logistic regression
+variable_importance_log <- varImp(model_log_cs, scale = FALSE)
+# visualisation des features importance
+png("oneFileCode/figures/variable_importance_logistic.png", width = 1200, height = 800)
+ggplot(variable_importance_log, aes(x = reorder(Variable, Overall), y = Overall)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Importance des variables - Régression Logistique (Cost-Sensitive)",
+       x = "Variables", y = "Importance") +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold")
+  )
+dev.off()
 
 
+# features importance for random forest
+variable_importance_rf <- varImp(model_rf, scale = FALSE)
 
 
+# hyperparams vesion ----------------#
+# Transform categorical variables into factors with explicit levels
+stroke_data_clean <- stroke_data_clean %>%
+  mutate(
+    gender = factor(gender),
+    ever_married = factor(ever_married),
+    work_type = factor(work_type),
+    Residence_type = factor(Residence_type),
+    smoking_status = factor(smoking_status),
+    hypertension = factor(hypertension, levels = c(0, 1), labels = c("No", "Yes")),
+    heart_disease = factor(heart_disease, levels = c(0, 1), labels = c("No", "Yes")),
+    stroke = factor(stroke, levels = c(0, 1), labels = c("NoStroke", "Stroke")) # Use valid R variable names
+  )
+# Normalize continuous variables
+preprocess_params <- preProcess(stroke_data_clean %>% select(age, avg_glucose_level, bmi),
+                                method = c("center", "scale"))
+stroke_data_normalized <- predict(preprocess_params, stroke_data_clean)
+# Split data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(stroke_data_normalized$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data_normalized[trainIndex, ]
+test_data <- stroke_data_normalized[-trainIndex, ]
+
+# Define class weights for cost-sensitive learning
+# Higher weight for minority class (Stroke)
+class_weights <- ifelse(train_data$stroke == "Stroke", 10, 1)
+# Define training control with cross-validation
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  summaryFunction = twoClassSummary, # ROC-AUC
+  classProbs = TRUE, #  probability scores
+  verboseIter = TRUE
+)
+#  Logistic Regression with Cost-Sensitive Learning
+logistic_model <- train(
+  stroke ~ .,
+  data = train_data,
+  method = "glm",
+  family = "binomial",
+  weights = class_weights,
+  trControl = ctrl,
+  metric = "ROC"
+)
+#  Random Forest with Cost-Sensitive Learning
+rf_model <- train(
+  stroke ~ .,
+  data = train_data,
+  method = "rf",
+  weights = class_weights,
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = expand.grid(mtry = c(2, 4, 6)) # Tune mtry
+)
+#  KNN with Cost-Sensitive Learning
+knn_model <- train(
+  stroke ~ .,
+  data = train_data,
+  method = "knn",
+  weights = class_weights,
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = expand.grid(k = c(3, 5, 7, 9)) # Tune k
+)
+# Evaluate models on test data
+models <- list(Logistic = logistic_model, RandomForest = rf_model, KNN = knn_model)
+results <- lapply(models, function(model) {
+  predictions <- predict(model, test_data)
+  cm <- confusionMatrix(predictions, test_data$stroke, positive = "Stroke")
+  roc_auc <- roc(test_data$stroke, predict(model, test_data, type = "prob")[, "Stroke"])$auc
+  list(
+    ConfusionMatrix = cm,
+    ROC_AUC = roc_auc
+  )
+})
+# Print results
+for (model_name in names(results)) {
+  cat("\nResults for", model_name, ":\n")
+  print(results[[model_name]]$ConfusionMatrix)
+  cat("ROC-AUC:", results[[model_name]]$ROC_AUC, "\n")
+}
 
 
+# Probabilité # de Stroke avec glmnet
+library(glmnet)
+
+x <- model.matrix(stroke ~ ., train_data)[, -1]
+y <- train_data$stroke
+
+model_glmnet <- cv.glmnet(x, y, family = "binomial", alpha = 0.5,
+                          weights = class_weights,
+                          type.measure = "auc")
+
+# Prédiction
+x_test <- model.matrix(stroke ~ ., test_data)[, -1]
+probs_glmnet <- predict(model_glmnet, newx = x_test, s = "lambda.min", type = "response")
+pred_glmnet <- ifelse(probs_glmnet > 0.3, "Stroke", "NoStroke")
+
+confusionMatrix(factor(pred_glmnet, levels = c("NoStroke", "Stroke")),
+                test_data$stroke, positive = "Stroke")
+
+# visualisation de matrice confusion
+png("oneFileCode/figures/confusion_matrice_glmnet.png", width = 800, height = 600)
+cm_glmnet <- confusionMatrix(factor(pred_glmnet, levels = c("NoStroke", "Stroke")),
+                              test_data$stroke, positive = "Stroke")
+ggplot(as.data.frame(cm_glmnet$table), aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = Freq), color = "black", size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#c6dbef", high = "#08306b") +  # palette bleu lisible
+  labs(title = "Matrice de confusion - GLMNET",
+       x = "Classe réelle", y = "Classe prédite") +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.text = element_text(size = 14),
+    legend.position = "none",               # Supprime la légende inutile
+    panel.grid = element_blank()
+  )
+
+dev.off()
+
+#--------- arbre de décision avec discrétisation ------------#
 
 
+# Discretize numerical variables into 10 equal-width intervals
+stroke_data_discretized <- stroke_data_clean %>%
+  mutate(
+    age = cut(age, breaks = 10, include.lowest = TRUE, dig.lab = 3),
+    avg_glucose_level = cut(avg_glucose_level, breaks = 10, include.lowest = TRUE, dig.lab = 3),
+    bmi = cut(bmi, breaks = 10, include.lowest = TRUE, dig.lab = 3)
+  )
 
+# Split data into training (80%) and testing (20%) sets
+trainIndex <- createDataPartition(stroke_data_discretized$stroke, p = 0.8, list = FALSE)
+train_data <- stroke_data_discretized[trainIndex, ]
+test_data <- stroke_data_discretized[-trainIndex, ]
 
+# Define class weights for cost-sensitive learning
+# Higher weight for minority class (Stroke)
+class_weights <- ifelse(train_data$stroke == "Stroke", 10, 1)
 
-
-
-
-
-
-
-
-
+# Define training control with cross-validation
+ctrl <- trainControl(
+  method = "cv",
+  number = 5,
+  summaryFunction = twoClassSummary, # For ROC-AUC
+  classProbs = TRUE, # For probability scores
+  verboseIter = TRUE
+)
+# Train Decision Tree with Cost-Sensitive Learning
+dt_model <- train(
+  stroke ~ .,
+  data = train_data,
+  method = "rpart",
+  weights = class_weights,
+  trControl = ctrl,
+  metric = "ROC",
+  tuneGrid = expand.grid(cp = seq(0.01, 0.1, by = 0.01)) # Tune complexity parameter
+)
+# Evaluate model on test data
+predictions <- predict(dt_model, test_data)
+cm <- confusionMatrix(predictions, test_data$stroke, positive = "Stroke")
+roc_auc <- roc(test_data$stroke, predict(dt_model, test_data, type = "prob")[, "Stroke"])$auc
+# Visualize the decision tree
+rpart.plot(dt_model$finalModel, main = "Decision Tree for Stroke Prediction", extra = 104, under = TRUE)
