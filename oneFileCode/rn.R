@@ -1,3 +1,4 @@
+
 # Load required libraries
 library(tidyverse)
 library(caret)
@@ -24,26 +25,49 @@ stroke_data <- read_csv(file_path) %>%
     stroke = factor(stroke, levels = c(0, 1), labels = c("NoStroke", "Stroke"))
   )
 
-# Normalize continuous variables to [0, 1]
-normalize <- function(x) (x - min(x)) / (max(x) - min(x))
-stroke_data <- stroke_data %>%
-  mutate(
-    age_norm = normalize(age),
-    bmi_norm = normalize(bmi),
-    glucose_norm = normalize(avg_glucose_level)
-  ) %>%
-  select(-age, -bmi, -avg_glucose_level)
-
 # Split data into training (80%) and test (20%) sets
 trainIndex <- createDataPartition(stroke_data$stroke, p = 0.8, list = FALSE)
 train_data <- stroke_data[trainIndex, ]
 test_data <- stroke_data[-trainIndex, ]
 
-# Calculate class weights for cost-sensitive learning with tunable multiplier
+# Extract raw values before normalization
+age_raw <- train_data$age
+bmi_raw <- train_data$bmi
+glucose_raw <- train_data$avg_glucose_level
+
+# Save normalization parameters properly
+norm_params <- list(
+  age_min = min(age_raw),
+  age_max = max(age_raw),
+  bmi_min = min(bmi_raw),
+  bmi_max = max(bmi_raw),
+  glucose_min = min(glucose_raw),
+  glucose_max = max(glucose_raw)
+)
+saveRDS(norm_params, "C:/Users/MoLemine/Documents/StrokePrediction/norm_params.rds")
+
+# Normalize continuous variables to [0, 1]
+normalize <- function(x, min_val, max_val) {
+  (x - min_val) / (max_val - min_val)
+}
+
+stroke_data <- stroke_data %>%
+  mutate(
+    age_norm = normalize(age, norm_params$age_min, norm_params$age_max),
+    bmi_norm = normalize(bmi, norm_params$bmi_min, norm_params$bmi_max),
+    glucose_norm = normalize(avg_glucose_level, norm_params$glucose_min, norm_params$glucose_max)
+  ) %>%
+  select(-age, -bmi, -avg_glucose_level)
+
+# Recreate train/test split after normalization
+train_data <- stroke_data[trainIndex, ]
+test_data <- stroke_data[-trainIndex, ]
+
+# Calculate class weights for cost-sensitive learning
 class_counts <- table(train_data$stroke)
 total_samples <- sum(class_counts)
 base_weights <- (total_samples / class_counts) / sum(total_samples / class_counts)
-weight_multiplier <- 1.5  
+weight_multiplier <- 1.5
 class_weights <- base_weights * weight_multiplier
 names(class_weights) <- levels(train_data$stroke)
 
@@ -65,17 +89,8 @@ nn_model <- train(stroke ~ ., data = train_data,
                   trace = FALSE,
                   weights = class_weights[train_data$stroke])
 
-# Make predictions on test set
-predictions <- predict(nn_model, test_data)
+# Save model
+saveRDS(nn_model, "C:/Users/MoLemine/Documents/StrokePrediction/nn_model.rds")
 
-# Evaluate performance
-conf_matrix <- confusionMatrix(predictions, test_data$stroke, positive = "Stroke")
-print(conf_matrix)
-
-# Visualize neural network performance (optional summary)
+# Print summary
 print(nn_model)
-# visualisation confusion matrix
-png("oneFileCode/figures/confusion_matrix_nn.png", width = 800, height = 600)
-fourfoldplot(conf_matrix$table, color = c("lightblue", "lightgreen"),
-              main = "Matrice de confusion du réseau de neurones avec pondération (seuil par défaut)")
-dev.off()
