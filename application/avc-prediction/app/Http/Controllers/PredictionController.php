@@ -30,15 +30,23 @@ class PredictionController extends Controller
     }
     public function predict(Request $request)
     {
+        // 1. Validation des champs
         $request->validate([
             'name' => 'required',
             'email' => 'required|email',
             'age' => 'required|numeric',
             'bmi' => 'required|numeric',
             'glucose' => 'required|numeric',
+            'gender' => 'required|in:Male,Female,Other',
+            'hypertension' => 'required|in:No,Yes',
+            'heart_disease' => 'required|in:No,Yes',
+            'ever_married' => 'required|in:No,Yes',
+            'work_type' => 'required|in:Private,Self-employed,Govt_job,Children,Never_worked',
+            'Residence_type' => 'required|in:Urban,Rural',
+            'smoking_status' => 'required|in:never smoked,formerly smoked,smokes,Unknown',
         ]);
 
-        // 1. Enregistrement initial sans le résultat
+        // 2. Enregistrement initial dans la base (sans le résultat)
         $prediction_record = Prediction::create([
             'name' => $request->name,
             'email' => $request->email,
@@ -55,7 +63,7 @@ class PredictionController extends Controller
             'glucose' => $request->glucose,
         ]);
 
-        // 2. Appel du script R
+        // 3. Préparation de la commande R
         $R_PATH = '"C:\\Program Files\\R\\R-4.5.0\\bin\\Rscript.exe"';
         $SCRIPT_PATH = '"C:\\Users\\MoLemine\\Documents\\StrokePrediction\\predict_avc.R"';
 
@@ -75,20 +83,35 @@ class PredictionController extends Controller
         $command = "$R_PATH $SCRIPT_PATH " . implode(' ', $args);
         exec($command, $output, $status);
 
-        $prediction_result = ($status === 0 && !empty($output)) ? trim(implode('', $output)) : 'Erreur';
+        // 4. Traitement du résultat
+        $prediction_result = ($status === 0 && !empty($output))
+            ? trim(implode('', $output))
+            : null;
 
-        // Convertir en 0 ou 1
-        $result_binary = $prediction_result === 'Stroke' ? 1 : 0;
+        // dd($command, $output, $status , $prediction_result);
 
-        // 3. Mise à jour du résultat dans la base
+        if ($prediction_result === '0') {
+            $label = 'Pas d\'AVC';
+            $result_binary = 0;
+        } elseif ($prediction_result === '1') {
+            $label = 'AVC';
+            $result_binary = 1;
+        } else {
+            $label = 'Erreur lors de la prédiction';
+            $result_binary = null;
+        }
+
+        // 5. Mise à jour du résultat en base
         $prediction_record->update(['result' => $result_binary]);
+        // dd($prediction_record);
 
-        // 4. Affichage du résultat avec toutes les données
+        // 6. Retour à la vue avec les données complètes
         return view('result', [
-            'prediction' => $prediction_result,
+            'prediction' => $label,
             'data' => $prediction_record
         ]);
     }
+
     public function eda()
     {
         return view('eda');

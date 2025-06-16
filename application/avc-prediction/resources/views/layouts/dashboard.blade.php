@@ -26,11 +26,9 @@
                             class="fas fa-bars"></i></a>
                 </li>
                 <li class="nav-item d-none d-sm-inline-block">
-                    <a href="../../index3.html" class="nav-link">Home</a>
+                    <a href="{{url('/statistics')}}" class="nav-link">Home</a>
                 </li>
-                <li class="nav-item d-none d-sm-inline-block">
-                    <a href="#" class="nav-link">Contact</a>
-                </li>
+                
             </ul>
 
             <!-- Right navbar links -->
@@ -60,7 +58,7 @@
                 <!-- User panel -->
                 <div class="user-panel mt-3 pb-3 mb-3 d-flex">
                     <div class="image">
-                        <img src="{{ asset('dist/img/user2-160x160.jpg') }}" class="img-circle elevation-2"
+                        <img src="{{ asset('figures/avc.png') }}" class="img-circle elevation-2"
                             alt="User Image">
                     </div>
                     <div class="info">

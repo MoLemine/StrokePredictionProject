@@ -7,9 +7,9 @@
         <section class="content">
             <div class="container-fluid">
                 <div class="card shadow">
-                    <div class="alert {{ $prediction == 1 ? 'alert-danger' : 'alert-success' }}" role="alert"
+                    <div class="alert {{ $prediction == "AVC" ? 'alert-danger' : 'alert-success' }}" role="alert"
                         style="font-size: 1.3rem;">
-                        <strong>Résultat de la prédiction :</strong> {{ $prediction == 1 ? 'Stroke' : 'No Stroke' }}
+                        <strong>Résultat de la prédiction :</strong> {{ $prediction == "AVC" ? 'AVC' : 'Pas d\'AVC' }}
                     </div>
 
 

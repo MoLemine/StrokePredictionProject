@@ -1,7 +1,8 @@
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# Charger les bibliothèques nécessaires
+
+# Charger les bibliothèques
 library(tidyverse)
 library(ggplot2)
 library(lattice)
@@ -24,12 +25,12 @@ age <- as.numeric(args[8])
 bmi <- as.numeric(args[9])
 glucose <- as.numeric(args[10])
 
-# Appliquer la normalisation
+# Normalisation
 age_norm <- (age - norm_params$age_min) / (norm_params$age_max - norm_params$age_min)
 bmi_norm <- (bmi - norm_params$bmi_min) / (norm_params$bmi_max - norm_params$bmi_min)
 glucose_norm <- (glucose - norm_params$glucose_min) / (norm_params$glucose_max - norm_params$glucose_min)
 
-# Construire l'entrée du modèle avec les bons types
+# Préparer les données
 input_data <- data.frame(
   gender = factor(gender, levels = c("Male", "Female", "Other")),
   hypertension = factor(hypertension, levels = c("No", "Yes")),
@@ -43,10 +44,13 @@ input_data <- data.frame(
   glucose_norm = glucose_norm
 )
 
-# Faire la prédiction
+# Prédiction
 result <- predict(model, input_data)
-print(input_data)
+if (result == "NoStroke") {
+  cat(0)
+} else {
+  cat(1)
+}
 
-#cat("Résultat :", result)
-# Afficher les résultats
-cat(as.character(result))
+
+
